@@ -29,4 +29,7 @@ env/
 
 # server
 station_state.json
-node_modules
+node_modules/
+backend/smartcontract/expense-vault/
+backend/smartcontract/
+smartcontracts/
