@@ -1,14 +1,15 @@
 .page {
-  padding: 20px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 .gridMain {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
+  align-items: start;
 }
 
 @media (max-width: 900px) {

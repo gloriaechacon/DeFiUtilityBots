@@ -1,7 +1,7 @@
-//WIP MOCK useSimulation.ts
+"use client";
 
-import { useCallback, useState } from "react";
-import { SimulationState, SimulationMode, TimelineEvent } from "./types";
+import React, { createContext, useContext, useCallback, useMemo, useState } from "react";
+import type { SimulationMode, SimulationState, TimelineEvent } from "./types";
 
 const initialState: SimulationState = {
   mode: "local",
@@ -21,26 +21,25 @@ const initialState: SimulationState = {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function safeId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : String(Date.now());
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
 }
 
-function addEvent(
-  prev: TimelineEvent[],
-  ev: Omit<TimelineEvent, "id" | "timestamp">
-): TimelineEvent[] {
-  return [
-    ...prev,
-    {
-      id: safeId(),
-      timestamp: Date.now(),
-      ...ev,
-    },
-  ];
+function addEvent(prev: TimelineEvent[], ev: Omit<TimelineEvent, "id" | "timestamp">): TimelineEvent[] {
+  return [...prev, { id: safeId(), timestamp: Date.now(), ...ev }];
 }
 
-export function useSimulation() {
+type SimulationContextValue = {
+  state: SimulationState;
+  setMode: (mode: SimulationMode) => void;
+  start: () => Promise<void>;
+  abort: (reason?: string) => void;
+  reset: () => void;
+  sessionDurationSec: number;
+};
+
+const SimulationContext = createContext<SimulationContextValue | null>(null);
+
+export function SimulationProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<SimulationState>(initialState);
 
   const setMode = useCallback((mode: SimulationMode) => {
@@ -48,25 +47,22 @@ export function useSimulation() {
   }, []);
 
   const reset = useCallback(() => {
-    setState((s) => ({
-      ...initialState,
-      mode: s.mode,
-    }));
+    setState((s) => ({ ...initialState, mode: s.mode }));
   }, []);
 
   const abort = useCallback((reason?: string) => {
-      setState((s) => ({
-        ...s,
-        flowState: "ABORTED",
-        isRunning: false,
-        timeline: addEvent(s.timeline, {
-          type: "FLOW_ABORTED",
-          title: "Flow Aborted",
-          description: reason ?? "Simulation aborted manually",
-          status: "error",
-        }),
-      }));
-    }, []);
+    setState((s) => ({
+      ...s,
+      flowState: "ABORTED",
+      isRunning: false,
+      timeline: addEvent(s.timeline, {
+        type: "FLOW_ABORTED",
+        title: "Flow Aborted",
+        description: reason ?? "Simulation aborted manually",
+        status: "error",
+      }),
+    }));
+  }, []);
 
   const start = useCallback(async () => {
     setState((s) => ({
@@ -88,7 +84,7 @@ export function useSimulation() {
       }),
     }));
 
-    await wait(500);
+    await wait(900);
 
     setState((s) => ({
       ...s,
@@ -102,7 +98,7 @@ export function useSimulation() {
       }),
     }));
 
-    await wait(700);
+    await wait(1100);
 
     setState((s) => ({
       ...s,
@@ -116,7 +112,7 @@ export function useSimulation() {
       }),
     }));
 
-    await wait(600);
+    await wait(1000);
 
     setState((s) => ({
       ...s,
@@ -129,7 +125,7 @@ export function useSimulation() {
       }),
     }));
 
-    await wait(900);
+    await wait(1200);
 
     setState((s) => ({
       ...s,
@@ -150,15 +146,18 @@ export function useSimulation() {
     }));
   }, []);
 
-  const sessionDurationSec =
-    state.flowStartedAt ? Math.floor((Date.now() - state.flowStartedAt) / 1000) : 0;
+  const sessionDurationSec = state.flowStartedAt ? Math.floor((Date.now() - state.flowStartedAt) / 1000) : 0;
 
-  return {
-    state,
-    setMode,
-    start,
-    abort,
-    reset,
-    sessionDurationSec,
-  };
+  const value = useMemo(
+    () => ({ state, setMode, start, abort, reset, sessionDurationSec }),
+    [state, setMode, start, abort, reset, sessionDurationSec]
+  );
+
+  return <SimulationContext.Provider value={value}>{children}</SimulationContext.Provider>;
+}
+
+export function useSimulation() {
+  const ctx = useContext(SimulationContext);
+  if (!ctx) throw new Error("useSimulation must be used inside <SimulationProvider />");
+  return ctx;
 }

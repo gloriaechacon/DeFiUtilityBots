@@ -16,6 +16,8 @@ export type TimelineEventType =
     | "PAYMENT_VERIFIED"
     | "FUEL_UNLOCKED"
     | "REFUEL_COMPLETED"
+    | "REFUEL_STARTED"
+    | "FLOW_ABORTED"
     | "ERROR";
 
 export interface TimelineEvent {
@@ -24,8 +26,8 @@ export interface TimelineEvent {
     title: string;
     description: string;
     timestamp: number;
-    meta?: Record<string, string>;
-    status?: "success" | "warning" | "info"| "error";
+    meta?: Record<string, string | number | boolean>;
+    status?: "success" | "warning" | "info" | "error";
 }
 
 export interface DashboardStats {

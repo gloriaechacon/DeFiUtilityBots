@@ -11,7 +11,7 @@ export function ToggleOption({
 }) {
     return (
         <button
-            className={`${styles.toggleOption} ${active ? styles.active : ""}`}
+            className={`${styles.toggleOption} ${active ? styles.toggleOn : styles.toggleOff}`}
             onClick={onClick}
             type="button"
         >
