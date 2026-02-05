@@ -1,24 +1,28 @@
 "use client";
 
-import React, { createContext, useContext, useCallback, useMemo, useState } from "react";
+import React, { createContext, useContext, useCallback, useMemo, useState, useEffect, useRef } from "react";
 import type { SimulationMode, SimulationState, TimelineEvent } from "./types";
 
 const initialState: SimulationState = {
   mode: "local",
   isRunning: false,
-  flowState: "NEED_FUEL",
+  flowState: "NEED_ACCESS",
   flowStartedAt: undefined,
   timeline: [],
   dashboardStats: {
-    vaultBalanceUsdc: 125.4,
+    expenseVaultBalanceUsdc: 125.4,
     yieldEarnedUsdc: 0.38,
     paymentGateStatus: "None",
-    lastRefuelTimestamp: undefined,
-    lastRefuelAmountUsdc: undefined,
+    lastPaymentTimestamp: undefined,
+    lastPaymentAmountUsdc: undefined,
   },
 };
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function generateYieldFee(min: number, max: number) {
+  return Math.random() * (max - min) + min;
+}
 
 function safeId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
@@ -41,6 +45,39 @@ const SimulationContext = createContext<SimulationContextValue | null>(null);
 
 export function SimulationProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<SimulationState>(initialState);
+  const yieldTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (yieldTimerRef.current) {
+      window.clearInterval(yieldTimerRef.current);
+      yieldTimerRef.current = null;
+    }
+
+    if (state.mode !== "local") return;
+
+    yieldTimerRef.current = window.setInterval(() => {
+      setState((s) => {
+        if (s.dashboardStats.expenseVaultBalanceUsdc <= 0) return s;
+
+        const fee = generateYieldFee(0.01, 0.06);
+
+        return {
+          ...s,
+          dashboardStats: {
+            ...s.dashboardStats,
+            yieldEarnedUsdc: +(s.dashboardStats.yieldEarnedUsdc + fee).toFixed(2),
+          },
+        };
+      });
+    }, 12000);
+
+    return () => {
+      if (yieldTimerRef.current) {
+        window.clearInterval(yieldTimerRef.current);
+        yieldTimerRef.current = null;
+      }
+    };
+  }, [state.mode]);
 
   const setMode = useCallback((mode: SimulationMode) => {
     setState((s) => ({ ...s, mode }));
@@ -69,7 +106,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       ...s,
       isRunning: true,
       flowStartedAt: Date.now(),
-      flowState: "NEED_FUEL",
+      flowState: "NEED_ACCESS",
       timeline: [],
       dashboardStats: { ...s.dashboardStats, paymentGateStatus: "None" },
     }));
@@ -78,8 +115,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       ...s,
       timeline: addEvent(s.timeline, {
         type: "QUOTE_REQUESTED",
-        title: "Quote Requested",
-        description: "Car agent requested a fuel quote",
+        title: "Service Quote Requested",
+        description: "Agent requested a quote for a protected service",
         status: "info",
       }),
     }));
@@ -88,11 +125,11 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
 
     setState((s) => ({
       ...s,
-      flowState: "WAITING_PAYMENT",
+      flowState: "AWAITING_AUTHORIZATION",
       timeline: addEvent(s.timeline, {
         type: "PAYMENT_REQUIRED_402",
-        title: "402 Payment Required",
-        description: "Gas station enforced 0x402 payment gate",
+        title: "Micropayment Required",
+        description: "Service enforced a payment gate before granting access",
         status: "warning",
         meta: { Gate: "0x402" },
       }),
@@ -102,12 +139,12 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
 
     setState((s) => ({
       ...s,
-      flowState: "PAYMENT_CONFIRMED",
+      flowState: "AUTHORIZATION_CONFIRMED",
       dashboardStats: { ...s.dashboardStats, paymentGateStatus: "Verified" },
       timeline: addEvent(s.timeline, {
-        type: "PAYMENT_VERIFIED",
-        title: "Payment Verified",
-        description: "Payment confirmed; access authorized",
+        type: "ACCESS_GRANTED",
+        title: "Access Granted",
+        description: "Payment verified; access authorized",
         status: "success",
       }),
     }));
@@ -116,11 +153,11 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
 
     setState((s) => ({
       ...s,
-      flowState: "REFUELING",
+      flowState: "ACCESSING_RESOURCE",
       timeline: addEvent(s.timeline, {
-        type: "REFUEL_STARTED",
-        title: "Refueling Started",
-        description: "Fueling session started",
+        type: "RESOURCE_ACCESS_STARTED",
+        title: "Resource Access Started",
+        description: "Autonomous session started",
         status: "info",
       }),
     }));
@@ -133,14 +170,14 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       isRunning: false,
       dashboardStats: {
         ...s.dashboardStats,
-        lastRefuelAmountUsdc: 12,
-        lastRefuelTimestamp: Date.now(),
-        vaultBalanceUsdc: +(s.dashboardStats.vaultBalanceUsdc - 12).toFixed(2),
+        lastPaymentAmountUsdc: 12,
+        lastPaymentTimestamp: Date.now(),
+        expenseVaultBalanceUsdc: +(s.dashboardStats.expenseVaultBalanceUsdc - 12).toFixed(2),
       },
       timeline: addEvent(s.timeline, {
-        type: "REFUEL_COMPLETED",
-        title: "Refuel Completed",
-        description: "Autonomous refuel finished successfully",
+        type: "SERVICE_FULFILLED",
+        title: "Service Fulfilled",
+        description: "Autonomous payment + access completed successfully",
         status: "success",
       }),
     }));

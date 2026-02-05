@@ -1,24 +1,24 @@
-import styles from './event-timeline.module.css';
-import { useSimulation } from '../simulation/simulation-context';
-import { EventItem } from './event-item';
+import styles from "./event-timeline.module.css";
+import { useSimulation } from "../simulation/simulation-context";
+import { EventItem } from "./event-item";
 
 export function EventTimeline() {
-    const { state } = useSimulation();
-    const timeline = state.timeline;
+  const { state } = useSimulation();
+  const timeline = state.timeline;
 
-     if (timeline.length === 0) {
-    return (
-      <div className={styles.empty}>
-        Waiting for events…
-      </div>
-    );
-  }
+  return (
+    <section className={styles.card}>
+      <div className={styles.cardTitle}>Event Timeline</div>
 
-    return (
-    <div className={styles.timeline}>
-      {timeline.map((event) => (
-        <EventItem key={event.id} event={event} />
-      ))}
-    </div>
-    );
+      {timeline.length === 0 ? (
+        <div className={styles.empty}>Waiting for events…</div>
+      ) : (
+        <div className={styles.timeline}>
+          {timeline.map((event) => (
+            <EventItem key={event.id} event={event} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }

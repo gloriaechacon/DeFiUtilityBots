@@ -3,22 +3,48 @@
 import styles from "./action-bar.module.css";
 import { Button } from "./button";
 import { useSimulation } from "../simulation/simulation-context";
+import { VaultModal } from "@/components/vault/vault-modal";
+import { useState } from "react";
 
 export function ActionBar() {
   const { start, reset, state } = useSimulation();
+  const isLocal = state.mode === "local";
+  const [fundOpen, setFundOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+
+
 
   return (
-    <div className={styles.actionBar}>
-      <Button
-        onClick={start}
-        disabled={state.isRunning}
-      >
-        Start Session
-      </Button>
+    <section className={styles.bar}>
+      <div className={styles.left}>
+        <Button onClick={start} disabled={state.isRunning}>Start Session</Button>
+        {!isLocal && (
+          <Button variant="secondary" onClick={reset}>Reset</Button>
+        )}
+      </div>
 
-      <Button onClick={reset}>
-        Reset
-      </Button>
-    </div>
+      <div className={styles.right}>
+        <Button variant="secondary" disabled={isLocal} onClick={() => setFundOpen(true)}>
+          Fund Vault
+        </Button>
+        <Button variant="secondary" disabled={isLocal} onClick={() => setWithdrawOpen(true)}>
+          Withdraw Vault
+        </Button>
+      </div>
+
+      <VaultModal
+        open={fundOpen}
+        title="Fund Expense Vault"
+        modeLabel="Fund"
+        onClose={() => setFundOpen(false)}
+      />
+
+      <VaultModal
+        open={withdrawOpen}
+        title="Withdraw from Expense Vault"
+        modeLabel="Withdraw"
+        onClose={() => setWithdrawOpen(false)}
+      />
+    </section>
   );
 }

@@ -1,22 +1,21 @@
 export type SimulationMode = "local" | "testnet";
 
-export type RefuelFlowState =
-    | "NEED_FUEL"
-    | "WAITING_PAYMENT"
-    | "PAYMENT_CONFIRMED"
-    | "REFUELING"
+export type FlowState =
+    | "NEED_ACCESS"
+    | "AWAITING_AUTHORIZATION"
+    | "AUTHORIZATION_CONFIRMED"
+    | "ACCESSING_RESOURCE"
     | "COMPLETED"
     | "ABORTED";
 
 export type TimelineEventType =
     | "QUOTE_REQUESTED"
-    | "QUOTE_RECEIVED"
     | "PAYMENT_REQUIRED_402"
     | "PAYMENT_SUBMITTED"
     | "PAYMENT_VERIFIED"
-    | "FUEL_UNLOCKED"
-    | "REFUEL_COMPLETED"
-    | "REFUEL_STARTED"
+    | "ACCESS_GRANTED"
+    | "RESOURCE_ACCESS_STARTED"
+    | "SERVICE_FULFILLED"
     | "FLOW_ABORTED"
     | "ERROR";
 
@@ -31,17 +30,17 @@ export interface TimelineEvent {
 }
 
 export interface DashboardStats {
-    vaultBalanceUsdc: number;
+    expenseVaultBalanceUsdc: number;
     yieldEarnedUsdc: number;
-    lastRefuelTimestamp?: number;
-    lastRefuelAmountUsdc?: number;
+    lastPaymentTimestamp?: number;
+    lastPaymentAmountUsdc?: number;
     paymentGateStatus: "Verified" | "Pending" | "None";
 }
 
 export interface SimulationState {
     mode: SimulationMode;
     isRunning: boolean;
-    flowState: RefuelFlowState;
+    flowState: FlowState;
     flowStartedAt?: number;
     timeline: TimelineEvent[];
     dashboardStats: DashboardStats;

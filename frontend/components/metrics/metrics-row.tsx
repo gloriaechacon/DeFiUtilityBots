@@ -19,17 +19,6 @@ function timeAgo(ts?: number) {
   return `${hr}h ago`;
 }
 
-function StatusBadge({ status }: { status: "Verified" | "Pending" | "None" }) {
-  const cls =
-    status === "Verified"
-      ? styles.badgeVerified
-      : status === "Pending"
-        ? styles.badgePending
-        : styles.badgeNone;
-
-  return <span className={`${styles.badge} ${cls}`}>{status}</span>;
-}
-
 export function MetricsRow() {
   const { state } = useSimulation();
   const stats = state.dashboardStats;
@@ -37,33 +26,23 @@ export function MetricsRow() {
   return (
     <section className={styles.row}>
       <MetricsCard
-        title="Vault Balance"
-        value={fmtUsdc(stats.vaultBalanceUsdc)}
+        title="Expense Vault Balance"
+        value={fmtUsdc(stats.expenseVaultBalanceUsdc)}
         icon={<span>💳</span>}
       />
 
       <MetricsCard
         title="Yield Earned"
         value={fmtUsdc(stats.yieldEarnedUsdc)}
-        sub="earned while idle"
+        sub="fees generated while idle"
         icon={<span>📈</span>}
       />
 
       <MetricsCard
-        title="Last Refuel"
-        value={
-          stats.lastRefuelAmountUsdc ? `$${stats.lastRefuelAmountUsdc.toFixed(2)}` : "—"
-        }
-        sub={stats.lastRefuelTimestamp ? timeAgo(stats.lastRefuelTimestamp) : "—"}
-        icon={<span>⛽</span>}
-      />
-
-      <MetricsCard
-        title="0x402 Status"
-        value={stats.paymentGateStatus === "Verified" ? "Verified" : "—"}
-        sub="payment gate"
-        icon={<span>✅</span>}
-        rightBadge={<StatusBadge status={stats.paymentGateStatus} />}
+        title="Last Payment"
+        value={stats.lastPaymentAmountUsdc ? `$${stats.lastPaymentAmountUsdc.toFixed(2)}` : "—"}
+        sub={stats.lastPaymentTimestamp ? timeAgo(stats.lastPaymentTimestamp) : "—"}
+        icon={<span>🧾</span>}
       />
     </section>
   );

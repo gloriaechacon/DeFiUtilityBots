@@ -1,10 +1,22 @@
 .actionBar {
-  margin-top: 8px;
-  padding: 10px;
-  border-radius: 12px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  width: 100%;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
