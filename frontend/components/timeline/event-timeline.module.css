@@ -1,26 +1,29 @@
 .card {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  padding: 14px;
+  padding: 16px;
   background: #fff;
-  min-height: 380px;
 }
 
 .cardTitle {
-  font-size: 14px;
-  font-weight: 800;
-  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 14px;
 }
 
-.list {
+.timeline {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .empty {
+  padding: 16px;
+  border-radius: 12px;
+  background: #f9fafb;
+  border: 1px dashed #e5e7eb;
   color: #6b7280;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .item {
@@ -36,12 +39,22 @@
   border: 1px solid #e5e7eb;
 }
 
-.info { background: #e5e7eb; }
-.success { background: #86efac; }
-.warning { background: #fcd34d; }
-.error { background: #fca5a5; }
+.info {
+  background: #e5e7eb;
+}
+.success {
+  background: #86efac;
+}
+.warning {
+  background: #fcd34d;
+}
+.error {
+  background: #fca5a5;
+}
 
-.content { flex: 1; }
+.content {
+  flex: 1;
+}
 
 .line1 {
   display: flex;
@@ -49,10 +62,20 @@
   gap: 12px;
 }
 
-.title { font-weight: 800; font-size: 14px; }
-.time { font-size: 12px; color: #6b7280; }
+.title {
+  font-weight: 700;
+  font-size: 15px;
+}
+.time {
+  font-size: 12px;
+  color: #6b7280;
+}
 
-.desc { font-size: 13px; color: #374151; margin-top: 2px; }
+.desc {
+  font-size: 13px;
+  color: #374151;
+  margin-top: 2px;
+}
 
 .meta {
   display: flex;
@@ -61,10 +84,11 @@
   margin-top: 8px;
 }
 
-.chip {
+.metaItem {
   font-size: 12px;
   border: 1px solid #e5e7eb;
   padding: 4px 8px;
   border-radius: 999px;
   color: #374151;
+  background: #fff;
 }

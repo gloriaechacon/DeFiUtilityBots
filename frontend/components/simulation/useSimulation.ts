@@ -54,6 +54,20 @@ export function useSimulation() {
     }));
   }, []);
 
+  const abort = useCallback((reason?: string) => {
+      setState((s) => ({
+        ...s,
+        flowState: "ABORTED",
+        isRunning: false,
+        timeline: addEvent(s.timeline, {
+          type: "FLOW_ABORTED",
+          title: "Flow Aborted",
+          description: reason ?? "Simulation aborted manually",
+          status: "error",
+        }),
+      }));
+    }, []);
+
   const start = useCallback(async () => {
     setState((s) => ({
       ...s,
@@ -92,29 +106,47 @@ export function useSimulation() {
 
     setState((s) => ({
       ...s,
+      flowState: "PAYMENT_CONFIRMED",
+      dashboardStats: { ...s.dashboardStats, paymentGateStatus: "Verified" },
+      timeline: addEvent(s.timeline, {
+        type: "PAYMENT_VERIFIED",
+        title: "Payment Verified",
+        description: "Payment confirmed; access authorized",
+        status: "success",
+      }),
+    }));
+
+    await wait(600);
+
+    setState((s) => ({
+      ...s,
+      flowState: "REFUELING",
+      timeline: addEvent(s.timeline, {
+        type: "REFUEL_STARTED",
+        title: "Refueling Started",
+        description: "Fueling session started",
+        status: "info",
+      }),
+    }));
+
+    await wait(900);
+
+    setState((s) => ({
+      ...s,
       flowState: "COMPLETED",
       isRunning: false,
       dashboardStats: {
         ...s.dashboardStats,
-        paymentGateStatus: "Verified",
         lastRefuelAmountUsdc: 12,
         lastRefuelTimestamp: Date.now(),
         vaultBalanceUsdc: +(s.dashboardStats.vaultBalanceUsdc - 12).toFixed(2),
       },
-      timeline: addEvent(
-        addEvent(s.timeline, {
-          type: "PAYMENT_VERIFIED",
-          title: "Payment Verified",
-          description: "Payment confirmed; access authorized",
-          status: "success",
-        }),
-        {
-          type: "REFUEL_COMPLETED",
-          title: "Refuel Completed",
-          description: "Autonomous refuel finished successfully",
-          status: "success",
-        }
-      ),
+      timeline: addEvent(s.timeline, {
+        type: "REFUEL_COMPLETED",
+        title: "Refuel Completed",
+        description: "Autonomous refuel finished successfully",
+        status: "success",
+      }),
     }));
   }, []);
 
@@ -125,6 +157,7 @@ export function useSimulation() {
     state,
     setMode,
     start,
+    abort,
     reset,
     sessionDurationSec,
   };

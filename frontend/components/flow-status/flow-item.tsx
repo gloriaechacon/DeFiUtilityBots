@@ -7,6 +7,8 @@ export function FlowItem({
   label: string;
   status: "done" | "active" | "todo";
 }) {
+  const showInProgress = status === "active" && label !== "Need fuel" && label !== "Done";
+
   return (
     <div className={styles.item}>
       <span

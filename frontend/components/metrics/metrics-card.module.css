@@ -1,7 +1,7 @@
 .card {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px;
   background: #fff;
   min-height: 88px;
 }
@@ -19,7 +19,7 @@
 }
 
 .value {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 800;
   margin-top: 6px;
 }
