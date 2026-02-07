@@ -1,0 +1,41 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mode {
+  display: flex;
+  gap: 8px;
+  margin-right: 4px;
+}
+
+.toggleOption {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 150ms ease;
+}
+
+.toggleOption:hover {
+  border-color: var(--border-strong);
+}
+
+.active,
+.toggleOn {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--foreground);
+}
+
+.toggleOff {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground-muted);
+}
