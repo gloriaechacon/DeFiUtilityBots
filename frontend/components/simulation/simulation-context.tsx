@@ -3,20 +3,23 @@
 import React, { createContext, useContext, useCallback, useMemo, useState, useEffect, useRef } from "react";
 import type { SimulationMode, SimulationState, TimelineEvent, BusinessCase } from "./types";
 
+const MOCK_VAULT_BALANCE_USDC = 125.4;
+const MOCK_YIELD_EARNED_USDC = 0.38;
+
 const initialState: SimulationState = {
-  mode: "testnet",
+  mode: "local",
   isRunning: false,
   flowState: "NEED_ACCESS",
   flowStartedAt: undefined,
   timeline: [],
   dashboardStats: {
-    expenseVaultBalanceUsdc: 0,
-    yieldEarnedUsdc: 0,
+    expenseVaultBalanceUsdc: MOCK_VAULT_BALANCE_USDC,
+    yieldEarnedUsdc: MOCK_YIELD_EARNED_USDC,
     paymentGateStatus: "None",
     lastPaymentTimestamp: undefined,
     lastPaymentAmountUsdc: undefined,
   },
-  selectedBusinessCase: null,
+  selectedBusinessCase: "vending_machine",
 };
 
 function safeId() {
@@ -25,6 +28,23 @@ function safeId() {
 
 function addEvent(prev: TimelineEvent[], ev: Omit<TimelineEvent, "id" | "timestamp">): TimelineEvent[] {
   return [...prev, { id: safeId(), timestamp: Date.now(), ...ev }];
+}
+
+function randomInRange(min: number, max: number) {
+  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
+}
+
+function getMockPaymentForBusinessCase(bc: BusinessCase | null) {
+  switch (bc) {
+    case "vending_machine":
+      return randomInRange(10, 20);
+    case "laundry":
+      return randomInRange(10, 20);
+    case "gas_station":
+      return randomInRange(10, 20);
+    default:
+      return randomInRange(10, 20);
+  }
 }
 
 type SimulationContextValue = {
@@ -44,6 +64,14 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   const pollTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (state.mode === "local") {
+      if (pollTimerRef.current) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      return;
+    }
+
     const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001";
 
     async function fetchTimeline() {
@@ -53,7 +81,7 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       return Array.isArray(data.items) ? data.items : [];
     }
 
-    async function poll() {
+    async function pollBackendTimeline() {
       try {
         const timeline = await fetchTimeline();
 
@@ -106,8 +134,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       }
     }
 
-    poll();
-    pollTimerRef.current = window.setInterval(poll, 3000);
+    pollBackendTimeline();
+    pollTimerRef.current = window.setInterval(pollBackendTimeline, 3000);
 
     return () => {
       if (pollTimerRef.current) {
@@ -115,7 +143,26 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
         pollTimerRef.current = null;
       }
     };
-  }, []);
+  }, [state.mode]);
+
+  useEffect(() => {
+  if (state.mode !== "local") return;
+
+  const id = window.setInterval(() => {
+    setState((s) => {
+      const bump = Math.random() * 0.18 + 0.07;
+      return {
+        ...s,
+        dashboardStats: {
+          ...s.dashboardStats,
+          yieldEarnedUsdc: +(s.dashboardStats.yieldEarnedUsdc + bump).toFixed(2),
+        },
+      };
+    });
+  }, 12000);
+
+  return () => window.clearInterval(id);
+}, [state.mode]);
 
   const setMode = useCallback((mode: SimulationMode) => {
     setState((s) => ({ ...s, mode }));
@@ -126,7 +173,25 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const reset = useCallback(() => {
-    setState((s) => ({ ...initialState, mode: s.mode, selectedBusinessCase: s.selectedBusinessCase }));
+    setState((s) => {
+      if (s.mode !== "local") return s;
+
+      return {
+        ...s,
+        isRunning: false,
+        flowStartedAt: undefined,
+        flowState: "NEED_ACCESS",
+        timeline: [],
+        dashboardStats: {
+          ...s.dashboardStats,
+          expenseVaultBalanceUsdc: MOCK_VAULT_BALANCE_USDC,
+          yieldEarnedUsdc: MOCK_YIELD_EARNED_USDC,
+          paymentGateStatus: "None",
+          lastPaymentTimestamp: undefined,
+          lastPaymentAmountUsdc: undefined,
+        },
+      };
+    });
   }, []);
 
   const abort = useCallback((reason?: string) => {
@@ -143,6 +208,8 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
     }));
   }, []);
 
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
   const start = useCallback(async () => {
     setState((s) => ({
       ...s,
@@ -152,7 +219,85 @@ export function SimulationProvider({ children }: { children: React.ReactNode }) 
       timeline: [],
       dashboardStats: { ...s.dashboardStats, paymentGateStatus: "None" },
     }));
-  }, []);
+
+    if (state.mode === "local") {
+      setState((s) => ({
+        ...s,
+        timeline: addEvent(s.timeline, {
+          type: "QUOTE_REQUESTED",
+          title: "Quote Requested",
+          description: `Requested a quote for ${s.selectedBusinessCase ?? "vending_machine"}`,
+          status: "info",
+        }),
+      }));
+
+      await wait(500);
+
+      setState((s) => ({
+        ...s,
+        flowState: "AWAITING_AUTHORIZATION",
+        timeline: addEvent(s.timeline, {
+          type: "PAYMENT_REQUIRED_402",
+          title: "402 Payment Required",
+          description: "Payment gate enforced (mock)",
+          status: "warning",
+          meta: { Gate: "0x402" },
+        }),
+      }));
+
+      await wait(700);
+
+      setState((s) => ({
+        ...s,
+        flowState: "AUTHORIZATION_CONFIRMED",
+        dashboardStats: { ...s.dashboardStats, paymentGateStatus: "Verified" },
+        timeline: addEvent(s.timeline, {
+          type: "PAYMENT_VERIFIED",
+          title: "Payment Verified",
+          description: "Payment confirmed (mock)",
+          status: "success",
+        }),
+      }));
+
+      await wait(600);
+
+      setState((s) => ({
+        ...s,
+        flowState: "ACCESSING_RESOURCE",
+        timeline: addEvent(s.timeline, {
+          type: "RESOURCE_ACCESS_STARTED",
+          title: "Service Started",
+          description: "Service is being fulfilled (mock)",
+          status: "info",
+        }),
+      }));
+
+      await wait(900);
+
+      const mockPayment = getMockPaymentForBusinessCase(state.selectedBusinessCase);
+
+      setState((s) => ({
+        ...s,
+        flowState: "COMPLETED",
+        isRunning: false,
+        dashboardStats: {
+          ...s.dashboardStats,
+          lastPaymentAmountUsdc: mockPayment,
+          lastPaymentTimestamp: Date.now(),
+          expenseVaultBalanceUsdc: +(s.dashboardStats.expenseVaultBalanceUsdc - mockPayment).toFixed(2),
+        },
+        timeline: addEvent(s.timeline, {
+          type: "SERVICE_FULFILLED",
+          title: "Service Fulfilled",
+          description: "Flow completed successfully (mock)",
+          status: "success",
+        }),
+      }));
+
+      return;
+    }
+
+  }, [state.mode]);
 
   const sessionDurationSec = state.flowStartedAt ? Math.floor((Date.now() - state.flowStartedAt) / 1000) : 0;
 

@@ -42,3 +42,7 @@ backend/smartcontract/.gitignore
 backend/smartcontract/.gitmodules
 backend/smartcontract/foundry.toml
 backend/smartcontract/foundry.lock
+
+# Visual Studio / VS Workspace
+.vs/
+*.sln.iml

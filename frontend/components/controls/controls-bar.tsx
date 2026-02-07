@@ -17,27 +17,19 @@ export function ControlsBar() {
                     active={isLocal}
                     onClick={() => setMode(isLocal ? "testnet" : "local")}
                 />
-                <ToggleOption
-                    label={`Vending Machine: ${state.selectedBusinessCase === "vending_machine" ? "ON" : "OFF"}`}
-                    active={state.selectedBusinessCase === "vending_machine"}
-                    onClick={() =>
-                        setBusinessCase(state.selectedBusinessCase === "vending_machine" ? null : "vending_machine")
-                    }
-                />
-                <ToggleOption
-                    label={`Laundry: ${state.selectedBusinessCase === "laundry" ? "ON" : "OFF"}`}
-                    active={state.selectedBusinessCase === "laundry"}
-                    onClick={() =>
-                        setBusinessCase(state.selectedBusinessCase === "laundry" ? null : "laundry")
-                    }
-                />
-                <ToggleOption
-                    label={`Gas Station: ${state.selectedBusinessCase === "gas_station" ? "ON" : "OFF"}`}
-                    active={state.selectedBusinessCase === "gas_station"}
-                    onClick={() =>
-                        setBusinessCase(state.selectedBusinessCase === "gas_station" ? null : "gas_station")
-                    }
-                />
+                
+                <div className={styles.selection}>
+                    <span className={styles.selectionLabel}>Selection Mode:</span>
+                    <select
+                        className={styles.selectionSelect}
+                        value={state.selectedBusinessCase ?? "vending_machine"}
+                        onChange={(e) => setBusinessCase(e.target.value as any)}
+                    >
+                        <option value="vending_machine">Vending Machine</option>
+                        <option value="laundry">Laundry</option>
+                        <option value="gas_station">Gas Station</option>
+                    </select>
+                </div>
             </div>
             <ConnectButton />
         </div>

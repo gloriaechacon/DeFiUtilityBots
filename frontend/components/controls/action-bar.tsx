@@ -6,17 +6,25 @@ import { useSimulation } from "../simulation/simulation-context";
 import { VaultModal } from "@/components/vault/vault-modal";
 import { useMemo, useState } from "react";
 import { createWagmiVaultAdapter } from "@/components/vault/vault-adapter-wagmi";
+import { useAccount } from "wagmi";
 
 export function ActionBar() {
   const { start, reset, state } = useSimulation();
+  const { address } = useAccount();
+
   const isLocal = state.mode === "local";
-  const noBusinessCase = !state.selectedBusinessCase;
   const isTestnet = state.mode === "testnet";
+
+  const noBusinessCase = !state.selectedBusinessCase;
+
   const [fundOpen, setFundOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   async function handleStartSession() {
     start();
+    
+    if (isLocal) return;
+
     const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001";
     try {
       const resp = await fetch(`${serverUrl}/agents/m2m/run`, {
@@ -35,15 +43,15 @@ export function ActionBar() {
 
   const vaultAdapter = useMemo(() => {
     return isTestnet ? createWagmiVaultAdapter() : null;
-  }, [isTestnet]);
+  }, [isTestnet, address]);
 
   return (
-    <section className={styles.bar}>
+    <section className={styles.actionBar}>
       <div className={styles.left}>
-        <Button onClick={handleStartSession} disabled={state.isRunning || noBusinessCase}>
+        <Button onClick={handleStartSession} disabled={state.isRunning || (!state.selectedBusinessCase && state.mode === "testnet")}>
           Start Session
         </Button>
-        {!isLocal && (
+        {isLocal && (
           <Button variant="secondary" onClick={reset}>Reset</Button>
         )}
       </div>
