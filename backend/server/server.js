@@ -3,6 +3,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import { JsonRpcProvider, Interface, getAddress, parseUnits } from "ethers";
+import { spawn } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
@@ -33,6 +36,183 @@ if (!MERCHANT_ADDRESS) throw new Error("Missing MERCHANT_ADDRESS in .env");
 if (!OWNER_ADDRESS) throw new Error("Missing OWNER_ADDRESS in .env");
 
 const provider = new JsonRpcProvider(BASE_SEPOLIA_RPC_URL);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// --------------------
+// UI helpers: in-memory timeline + summary
+// --------------------
+const MAX_TIMELINE_EVENTS = 500;
+const timelineEvents = [];
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function addTimelineEvent(event) {
+  const enriched = {
+    id: event.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    ts: event.ts || nowIso(),
+    ...event,
+  };
+
+  timelineEvents.unshift(enriched);
+  if (timelineEvents.length > MAX_TIMELINE_EVENTS) {
+    timelineEvents.length = MAX_TIMELINE_EVENTS;
+  }
+  return enriched;
+}
+
+function summarizeInvoices() {
+  const values = Object.values(invoices);
+  let totalUsd = 0;
+  let paidUsd = 0;
+  let pendingUsd = 0;
+  let expiredUsd = 0;
+
+  for (const inv of values) {
+    totalUsd += Number(inv.totalUsd || 0);
+    if (inv.status === "PAID") paidUsd += Number(inv.totalUsd || 0);
+    else if (inv.status === "EXPIRED") expiredUsd += Number(inv.totalUsd || 0);
+    else pendingUsd += Number(inv.totalUsd || 0);
+  }
+
+  return {
+    invoices_total: values.length,
+    invoices_paid: values.filter((i) => i.status === "PAID").length,
+    invoices_pending: values.filter((i) => i.status !== "PAID" && i.status !== "EXPIRED").length,
+    invoices_expired: values.filter((i) => i.status === "EXPIRED").length,
+    total_usd: Number(totalUsd.toFixed(2)),
+    paid_usd: Number(paidUsd.toFixed(2)),
+    pending_usd: Number(pendingUsd.toFixed(2)),
+    expired_usd: Number(expiredUsd.toFixed(2)),
+    last_event_at: timelineEvents[0]?.ts || null,
+  };
+}
+
+// --------------------
+// Agent runner (M2M)
+// --------------------
+const ALLOWED_BUSINESS_CASES = new Set(["gas_station", "vending_machine", "laundry"]);
+const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+
+function runM2MAgent(businessCase, { timeoutMs = 120_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!ALLOWED_BUSINESS_CASES.has(businessCase)) {
+      reject(new Error(`Unsupported business_case: ${businessCase}`));
+      return;
+    }
+
+    const agentsDir = path.resolve(__dirname, "..", "agents");
+    const scriptPath = path.join(agentsDir, "m2m_client.py");
+
+    const child = spawn(PYTHON_BIN, [scriptPath, businessCase], {
+      cwd: agentsDir,
+      env: process.env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (!finished) {
+        child.kill("SIGKILL");
+        reject(new Error(`Agent timeout after ${timeoutMs}ms`));
+      }
+    }, timeoutMs);
+
+    child.stdout.on("data", (d) => {
+      stdout += d.toString();
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      finished = true;
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      finished = true;
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function extractJsonObjectsFromText(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const results = [];
+  let buf = "";
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  function pushIfValid(str) {
+    try {
+      const obj = JSON.parse(str);
+      results.push(obj);
+    } catch {
+      // ignore non-JSON blocks
+    }
+  }
+
+  for (const line of lines) {
+    if (!buf) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) continue;
+      buf = trimmed;
+      depth = 0;
+      inString = false;
+      escape = false;
+      // fallthrough to count braces in this line
+    } else {
+      buf += "\n" + line;
+    }
+
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      if (ch === "}") depth -= 1;
+    }
+
+    if (buf && depth === 0) {
+      pushIfValid(buf);
+      buf = "";
+    }
+  }
+
+  return results;
+}
+
+function addAgentEventsToTimeline(events, businessCase) {
+  for (const ev of events) {
+    const eventType = ev.event || ev.type || "AGENT_EVENT";
+    addTimelineEvent({
+      type: "AGENT_EVENT",
+      event: eventType,
+      business_case: businessCase,
+      payload: ev,
+    });
+  }
+}
 
 // ExpenseVault event ABI (minimal)
 const VAULT_IFACE = new Interface([
@@ -257,6 +437,17 @@ function makeInvoiceBase({
   };
 
   invoices[invoiceId] = inv;
+
+  addTimelineEvent({
+    type: "INVOICE_CREATED",
+    business_case: businessCase,
+    device_id: deviceId,
+    client_id: clientId,
+    invoice_id: invoiceId,
+    total_usd: totalUsd,
+    status: inv.status,
+  });
+
   return inv;
 }
 
@@ -312,12 +503,28 @@ app.post("/m2m/confirm", async (req, res) => {
 
   if (inv.status === "EXPIRED" || nowMs() > inv.expiresAt) {
     inv.status = "EXPIRED";
+    addTimelineEvent({
+      type: "INVOICE_EXPIRED",
+      invoice_id: inv.invoiceId,
+      business_case: inv.businessCase,
+      device_id: inv.deviceId,
+      client_id: inv.clientId,
+      total_usd: inv.totalUsd,
+    });
     return res.status(402).json({ ok: false, error: "Invoice expired", invoiceId: inv.invoiceId });
   }
 
   const result = await verifyVaultSpendOnBaseSepolia(inv, txHash);
 
   if (!result.ok) {
+    addTimelineEvent({
+      type: "CONFIRM_PENDING",
+      invoice_id: inv.invoiceId,
+      business_case: inv.businessCase,
+      device_id: inv.deviceId,
+      client_id: inv.clientId,
+      reason: result.reason,
+    });
     return res.status(402).json({
       ok: false,
       error: "PAYMENT_NOT_VERIFIED_YET",
@@ -329,6 +536,16 @@ app.post("/m2m/confirm", async (req, res) => {
 
   inv.status = "PAID";
   inv.txHash = result.normalizedTxHash || normalizeTxHash(txHash) || txHash;
+
+  addTimelineEvent({
+    type: "PAYMENT_CONFIRMED",
+    invoice_id: inv.invoiceId,
+    business_case: inv.businessCase,
+    device_id: inv.deviceId,
+    client_id: inv.clientId,
+    total_usd: inv.totalUsd,
+    tx_hash: inv.txHash,
+  });
 
   return res.status(200).json(buildPaidResponse(inv));
 });
@@ -346,12 +563,28 @@ app.post("/fuel/confirm", async (req, res) => {
 
   if (inv.status === "EXPIRED" || nowMs() > inv.expiresAt) {
     inv.status = "EXPIRED";
+    addTimelineEvent({
+      type: "INVOICE_EXPIRED",
+      invoice_id: inv.invoiceId,
+      business_case: inv.businessCase,
+      device_id: inv.deviceId,
+      client_id: inv.clientId,
+      total_usd: inv.totalUsd,
+    });
     return res.status(402).json({ ok: false, error: "Invoice expired", invoiceId: inv.invoiceId });
   }
 
   const result = await verifyVaultSpendOnBaseSepolia(inv, txHash);
 
   if (!result.ok) {
+    addTimelineEvent({
+      type: "CONFIRM_PENDING",
+      invoice_id: inv.invoiceId,
+      business_case: inv.businessCase,
+      device_id: inv.deviceId,
+      client_id: inv.clientId,
+      reason: result.reason,
+    });
     return res.status(402).json({
       ok: false,
       error: "PAYMENT_NOT_VERIFIED_YET",
@@ -363,6 +596,15 @@ app.post("/fuel/confirm", async (req, res) => {
 
   inv.status = "PAID";
   inv.txHash = result.normalizedTxHash || normalizeTxHash(txHash) || txHash;
+  addTimelineEvent({
+    type: "PAYMENT_CONFIRMED",
+    invoice_id: inv.invoiceId,
+    business_case: inv.businessCase,
+    device_id: inv.deviceId,
+    client_id: inv.clientId,
+    total_usd: inv.totalUsd,
+    tx_hash: inv.txHash,
+  });
 
   // Keep old response shape for fuel clients:
   if (inv.businessCase === "gas_station") {
@@ -408,6 +650,14 @@ app.post("/m2m/purchase", async (req, res) => {
   }
 
   try {
+    addTimelineEvent({
+      type: "PURCHASE_REQUESTED",
+      business_case: businessCase,
+      device_id: deviceId,
+      client_id: clientId,
+      payload,
+    });
+
     if (businessCase === "gas_station") {
       const {
         station_id: stationId = "station-777",
@@ -433,6 +683,15 @@ app.post("/m2m/purchase", async (req, res) => {
         clientId,
         totalUsd,
         meta: { stationId, fuelType, liters, pricePerLiterUsd },
+      });
+
+      addTimelineEvent({
+        type: "PAYMENT_REQUIRED",
+        invoice_id: inv.invoiceId,
+        business_case: businessCase,
+        device_id: deviceId,
+        client_id: clientId,
+        total_usd: totalUsd,
       });
 
       return res.status(402).json({
@@ -465,6 +724,15 @@ app.post("/m2m/purchase", async (req, res) => {
         meta: { sku, quantity: qty, unitPriceUsd },
       });
 
+      addTimelineEvent({
+        type: "PAYMENT_REQUIRED",
+        invoice_id: inv.invoiceId,
+        business_case: businessCase,
+        device_id: deviceId,
+        client_id: clientId,
+        total_usd: totalUsd,
+      });
+
       return res.status(402).json({
         ok: false,
         error: "PAYMENT_REQUIRED",
@@ -488,6 +756,15 @@ app.post("/m2m/purchase", async (req, res) => {
         clientId,
         totalUsd,
         meta: { program },
+      });
+
+      addTimelineEvent({
+        type: "PAYMENT_REQUIRED",
+        invoice_id: inv.invoiceId,
+        business_case: businessCase,
+        device_id: deviceId,
+        client_id: clientId,
+        total_usd: totalUsd,
       });
 
       return res.status(402).json({
@@ -541,6 +818,22 @@ app.post("/fuel/purchase", async (req, res) => {
     meta: { stationId, fuelType, liters, pricePerLiterUsd },
   });
 
+  addTimelineEvent({
+    type: "PURCHASE_REQUESTED",
+    business_case: "gas_station",
+    device_id: stationId,
+    client_id: carId,
+    payload: { fuel_type: fuelType, liters, max_price_per_liter_usd: maxPrice },
+  });
+  addTimelineEvent({
+    type: "PAYMENT_REQUIRED",
+    invoice_id: inv.invoiceId,
+    business_case: "gas_station",
+    device_id: stationId,
+    client_id: carId,
+    total_usd: totalUsd,
+  });
+
   return res.status(402).json({
     ok: false,
     error: "PAYMENT_REQUIRED",
@@ -556,6 +849,14 @@ app.post("/vending/purchase", async (req, res) => {
   const payload = req.body?.payload ?? {};
 
   try {
+    addTimelineEvent({
+      type: "PURCHASE_REQUESTED",
+      business_case: "vending_machine",
+      device_id: deviceId,
+      client_id: clientId,
+      payload,
+    });
+
     const { totalUsd, meta } = createInvoiceForPurchase({
       businessCase: "vending_machine",
       clientId,
@@ -569,6 +870,15 @@ app.post("/vending/purchase", async (req, res) => {
       clientId,
       totalUsd,
       meta,
+    });
+
+    addTimelineEvent({
+      type: "PAYMENT_REQUIRED",
+      invoice_id: inv.invoiceId,
+      business_case: "vending_machine",
+      device_id: deviceId,
+      client_id: clientId,
+      total_usd: totalUsd,
     });
 
     return res.status(402).json({
@@ -589,6 +899,14 @@ app.post("/laundry/purchase", async (req, res) => {
   const payload = req.body?.payload ?? {};
 
   try {
+    addTimelineEvent({
+      type: "PURCHASE_REQUESTED",
+      business_case: "laundry",
+      device_id: deviceId,
+      client_id: clientId,
+      payload,
+    });
+
     const { totalUsd, meta } = createInvoiceForPurchase({
       businessCase: "laundry",
       clientId,
@@ -602,6 +920,15 @@ app.post("/laundry/purchase", async (req, res) => {
       clientId,
       totalUsd,
       meta,
+    });
+
+    addTimelineEvent({
+      type: "PAYMENT_REQUIRED",
+      invoice_id: inv.invoiceId,
+      business_case: "laundry",
+      device_id: deviceId,
+      client_id: clientId,
+      total_usd: totalUsd,
     });
 
     return res.status(402).json({
@@ -640,9 +967,94 @@ app.get("/fuel/invoice/:id", (req, res) => {
 });
 
 // --------------------
+// UI helpers
+// --------------------
+app.get("/ui/timeline", (req, res) => {
+  const {
+    limit = "50",
+    invoiceId,
+    clientId,
+    businessCase,
+    since,
+  } = req.query || {};
+
+  let items = [...timelineEvents];
+
+  if (invoiceId) items = items.filter((e) => e.invoice_id === invoiceId);
+  if (clientId) items = items.filter((e) => e.client_id === clientId);
+  if (businessCase) items = items.filter((e) => e.business_case === businessCase);
+  if (since) {
+    const sinceMs = Date.parse(String(since));
+    if (!Number.isNaN(sinceMs)) {
+      items = items.filter((e) => Date.parse(e.ts) >= sinceMs);
+    }
+  }
+
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  res.json({ ok: true, items: items.slice(0, lim) });
+});
+
+app.get("/ui/summary", (req, res) => {
+  res.json({ ok: true, summary: summarizeInvoices() });
+});
+
+// --------------------
+// Agent API
+// --------------------
+app.post("/agents/m2m/run", async (req, res) => {
+  const { business_case: businessCase } = req.body || {};
+
+  if (!businessCase || typeof businessCase !== "string") {
+    return res.status(400).json({ ok: false, error: "Missing business_case" });
+  }
+
+  if (!ALLOWED_BUSINESS_CASES.has(businessCase)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Unsupported business_case",
+      supported: Array.from(ALLOWED_BUSINESS_CASES),
+    });
+  }
+
+  addTimelineEvent({
+    type: "AGENT_RUN_REQUESTED",
+    business_case: businessCase,
+  });
+
+  try {
+    const result = await runM2MAgent(businessCase);
+    const ok = result.code === 0;
+
+    const parsedEvents = extractJsonObjectsFromText(result.stdout);
+    if (parsedEvents.length > 0) {
+      addAgentEventsToTimeline(parsedEvents, businessCase);
+    }
+
+    addTimelineEvent({
+      type: ok ? "AGENT_RUN_COMPLETED" : "AGENT_RUN_FAILED",
+      business_case: businessCase,
+      exit_code: result.code,
+    });
+
+    return res.status(ok ? 200 : 500).json({
+      ok,
+      business_case: businessCase,
+      exit_code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+  } catch (e) {
+    addTimelineEvent({
+      type: "AGENT_RUN_FAILED",
+      business_case: businessCase,
+      reason: String(e?.message || e),
+    });
+    return res.status(500).json({ ok: false, error: "Agent run failed", detail: String(e?.message || e) });
+  }
+});
+
+// --------------------
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
-
-

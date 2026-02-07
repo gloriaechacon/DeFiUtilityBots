@@ -6,13 +6,14 @@ import "../src/ExpenseVault.sol";
 import "../src/SimulatedLiquidityPool.sol";
 import "../src/LiquidityPoolStrategy.sol";
 
-
 /*//////////////////////////////////////////////////////////////
-                        MOCK USDC
+                    TEST-ONLY USDC (6 decimals)
+  NOTE: In local unit tests we need a mintable ERC20. This is not
+  deployed in the demo; demo uses Base Sepolia USDC address.
 //////////////////////////////////////////////////////////////*/
-contract MockUSDC {
-    string public name = "MockUSDC";
-    string public symbol = "mUSDC";
+contract TestUSDC {
+    string public name = "USD Coin";
+    string public symbol = "USDC";
     uint8 public decimals = 6;
 
     mapping(address => uint256) public balanceOf;
@@ -53,52 +54,25 @@ contract MockUSDC {
 }
 
 /*//////////////////////////////////////////////////////////////
-                    MOCK STRATEGY
-//////////////////////////////////////////////////////////////*/
-contract MockStrategy {
-    MockUSDC public usdc;
-    address public vault;
-
-    constructor(address _usdc, address _vault) {
-        usdc = MockUSDC(_usdc);
-        vault = _vault;
-    }
-
-    function totalAssets() external view returns (uint256) {
-        return usdc.balanceOf(address(this));
-    }
-
-    function depositFromVault(uint256 amount) external {
-        require(msg.sender == vault, "only vault");
-        usdc.transferFrom(vault, address(this), amount);
-    }
-
-    function withdrawToVault(uint256 amount) external {
-        require(msg.sender == vault, "only vault");
-        require(usdc.balanceOf(address(this)) >= amount, "insufficient strategy balance");
-        usdc.transfer(vault, amount);
-    }
-}
-
-/*//////////////////////////////////////////////////////////////
-                    TEST CONTRACT
+                        TEST CONTRACT
 //////////////////////////////////////////////////////////////*/
 contract ExpenseVaultTest is Test {
-    MockUSDC usdc;
+    TestUSDC usdc;
     ExpenseVault vault;
-    MockStrategy strategy;
 
     uint256 ownerPk;
     address owner;
+
     address spender = address(0xB0B);
     address merchant = address(0xCAFE);
+    address yieldFunder = address(0xF00D);
 
     function setUp() public {
         ownerPk = 0xA11CE; // deterministic test key
         owner = vm.addr(ownerPk);
-        usdc = new MockUSDC();
+
+        usdc = new TestUSDC();
         vault = new ExpenseVault(address(usdc));
-        strategy = new MockStrategy(address(usdc), address(vault));
 
         // Give owner 100 USDC
         usdc.mint(owner, 100e6);
@@ -111,7 +85,7 @@ contract ExpenseVaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        BASIC TESTS
+                            BASIC TESTS
     //////////////////////////////////////////////////////////////*/
 
     function testDepositMintShares() public {
@@ -125,12 +99,15 @@ contract ExpenseVaultTest is Test {
         vault.withdraw(10e6);
         vm.stopPrank();
 
+        // Owner had 100e6, deposited 50e6 => wallet 50e6.
+        // Withdraw 10e6 shares => gets 10e6 underlying back => 60e6.
         assertEq(usdc.balanceOf(owner), 60e6);
         assertEq(vault.balanceOf(owner), 40e6);
+        assertEq(vault.totalSupply(), 40e6);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        POLICY TESTS
+                            POLICY TESTS
     //////////////////////////////////////////////////////////////*/
 
     function testSpendWithPolicyWhitelist() public {
@@ -180,141 +157,118 @@ contract ExpenseVaultTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    STRATEGY INTEGRATION TESTS
+                OFF-CHAIN PERMITS + SPEND (EIP-712)
     //////////////////////////////////////////////////////////////*/
 
-    function testSetStrategyAndRebalance() public {
-        vm.prank(vault.governance());
-        vault.setStrategy(address(strategy));
+    function testOffchainPolicyAndMerchantPermitThenSpend() public {
+        uint256 deadline = block.timestamp + 1 days;
 
-        uint256 vaultBalBefore = usdc.balanceOf(address(vault));
+        // 1) Owner signs policy
+        uint256 nonce1 = vault.nonces(owner);
 
-        vm.prank(vault.governance());
-        vault.rebalance();
+        bytes32 structHashPolicy = keccak256(
+            abi.encode(
+                vault.SET_POLICY_TYPEHASH(),
+                owner,
+                spender,
+                true,      // enabled
+                20e6,      // maxPerTx
+                40e6,      // dailyLimit
+                true,      // enforce whitelist
+                nonce1,
+                deadline
+            )
+        );
 
-        uint256 vaultBalAfter = usdc.balanceOf(address(vault));
-        uint256 stratBal = usdc.balanceOf(address(strategy));
+        bytes32 digest1 = keccak256(abi.encodePacked("\x19\x01", vault.DOMAIN_SEPARATOR(), structHashPolicy));
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(ownerPk, digest1);
 
-        assertTrue(stratBal > 0);
-        assertTrue(vaultBalAfter < vaultBalBefore);
-        assertEq(vault.totalAssets(), 50e6);
+        // Spender (or anyone) submits the signature on-chain
+        vm.prank(spender);
+        vault.setPolicyWithSig(owner, spender, true, 20e6, 40e6, true, deadline, v1, r1, s1);
+
+        // 2) Owner signs merchant allow
+        uint256 nonce2 = vault.nonces(owner);
+
+        bytes32 structHashMerchant = keccak256(
+            abi.encode(
+                vault.SET_MERCHANT_TYPEHASH(),
+                owner,
+                spender,
+                merchant,
+                true,
+                nonce2,
+                deadline
+            )
+        );
+
+        bytes32 digest2 = keccak256(abi.encodePacked("\x19\x01", vault.DOMAIN_SEPARATOR(), structHashMerchant));
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(ownerPk, digest2);
+
+        vm.prank(spender);
+        vault.setMerchantAllowedWithSig(owner, spender, merchant, true, deadline, v2, r2, s2);
+
+        // 3) Spender can now spend
+        vm.prank(spender);
+        vault.spend(owner, merchant, 12e6);
+
+        assertEq(usdc.balanceOf(merchant), 12e6);
     }
 
-    function testWithdrawPullsFromStrategy() public {
-        vm.prank(vault.governance());
-        vault.setStrategy(address(strategy));
+    /*//////////////////////////////////////////////////////////////
+            SIMULATED LIQUIDITY POOL + STRATEGY (NO MINT)
+      Yield is simulated by pre-funding pool via fundYield().
+    //////////////////////////////////////////////////////////////*/
 
-        vm.prank(vault.governance());
-        vault.rebalance();
+    function testSimulatedLiquidityPoolYieldFlow() public {
+        // Deploy pool with 5% APY
+        SimulatedLiquidityPool pool = new SimulatedLiquidityPool(address(usdc), 500);
 
+        LiquidityPoolStrategy lpStrategy =
+            new LiquidityPoolStrategy(address(vault), address(usdc), address(pool));
+
+        // Move some vault funds to strategy and into the pool.
+        // (Vault currently has no strategy functions, so we simulate the keeper actions.)
+        uint256 amountToInvest = 30e6;
+
+        // Vault approves strategy to pull underlying
+        vm.prank(address(vault));
+        usdc.approve(address(lpStrategy), amountToInvest);
+
+        // Strategy pulls from vault and deposits into pool (onlyVault)
+        vm.prank(address(vault));
+        lpStrategy.depositFromVault(amountToInvest);
+
+        uint256 invested = pool.balances(address(lpStrategy));
+        assertEq(invested, amountToInvest);
+
+        // Fund yield reserve (so pool can actually accrue without minting)
+        usdc.mint(yieldFunder, 10e6);
+        vm.startPrank(yieldFunder);
+        usdc.approve(address(pool), 10e6);
+        pool.fundYield(10e6);
+        vm.stopPrank();
+
+        // Warp time and accrue
+        vm.warp(block.timestamp + 180 days);
+        pool.accrueInterest();
+
+        uint256 afterYield = pool.balances(address(lpStrategy));
+        assertTrue(afterYield > invested);
+
+        // Withdraw everything back to the vault
+        uint256 toWithdraw = pool.balances(address(lpStrategy));
+        vm.prank(address(vault));
+        lpStrategy.withdrawToVault(toWithdraw);
+
+        // Owner withdraws all shares and should end with > 100 USDC due to yield
         uint256 shares = vault.balanceOf(owner);
-
         vm.startPrank(owner);
         vault.withdraw(shares);
         vm.stopPrank();
 
-        assertEq(usdc.balanceOf(owner), 100e6);
-        assertEq(vault.totalAssets(), 0);
-        assertEq(usdc.balanceOf(address(strategy)), 0);
+        assertTrue(usdc.balanceOf(owner) > 100e6);
     }
-
-    function testVaultWithSimulatedLiquidityPool() public {
-    // Deploy pool with 5% APY
-    SimulatedLiquidityPool pool =
-        new SimulatedLiquidityPool(address(usdc), 500);
-
-    LiquidityPoolStrategy lpStrategy =
-        new LiquidityPoolStrategy(
-            address(vault),
-            address(usdc),
-            address(pool)
-        );
-
-    // Set strategy
-    vm.prank(vault.governance());
-    vault.setStrategy(address(lpStrategy));
-
-    // Rebalance into pool
-    vm.prank(vault.governance());
-    vault.rebalance();
-
-    uint256 invested = pool.balances(address(lpStrategy));
-    assertTrue(invested > 0);
-
-    // Warp time 6 months
-    vm.warp(block.timestamp + 365 days);
-
-    // Trigger interest accrual
-    pool.accrueInterest();
-
-    uint256 afterYield = pool.balances(address(lpStrategy));
-    assertTrue(afterYield > invested);
-
-    // Withdraw everything
-    uint256 shares = vault.balanceOf(owner);
-
-    vm.startPrank(owner);
-    vault.withdraw(shares);
-    vm.stopPrank();
-
-    assertTrue(usdc.balanceOf(owner) > 100e6);
-
-    }
-
-    function testOffchainPolicyAndMerchantPermitThenSpend() public {
-    // 1) Owner signs policy
-    uint256 deadline = block.timestamp + 1 days;
-    uint256 nonce1 = vault.nonces(owner);
-
-    bytes32 structHashPolicy = keccak256(
-        abi.encode(
-            vault.SET_POLICY_TYPEHASH(),
-            owner,
-            spender,
-            true,      // enabled
-            20e6,      // maxPerTx
-            40e6,      // dailyLimit
-            true,      // enforce whitelist
-            nonce1,
-            deadline
-        )
-    );
-
-    bytes32 digest1 = keccak256(abi.encodePacked("\x19\x01", vault.DOMAIN_SEPARATOR(), structHashPolicy));
-    (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(ownerPk, digest1);
-
-    // Robô (ou qualquer address) submits the signature on-chain:
-    vm.prank(spender);
-    vault.setPolicyWithSig(owner, spender, true, 20e6, 40e6, true, deadline, v1, r1, s1);
-
-    // 2) Owner signs merchant allow
-    uint256 nonce2 = vault.nonces(owner);
-
-    bytes32 structHashMerchant = keccak256(
-        abi.encode(
-            vault.SET_MERCHANT_TYPEHASH(),
-            owner,
-            spender,
-            merchant,
-            true,
-            nonce2,
-            deadline
-        )
-    );
-
-    bytes32 digest2 = keccak256(abi.encodePacked("\x19\x01", vault.DOMAIN_SEPARATOR(), structHashMerchant));
-    (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(ownerPk, digest2);
-
-    vm.prank(spender);
-    vault.setMerchantAllowedWithSig(owner, spender, merchant, true, deadline, v2, r2, s2);
-
-    // 3) Spender can now spend without owner's signature
-    vm.prank(spender);
-    vault.spend(owner, merchant, 12e6);
-
-    assertEq(usdc.balanceOf(merchant), 12e6);
-    }
-
-
 }
+
 

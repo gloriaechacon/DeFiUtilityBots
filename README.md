@@ -24,10 +24,7 @@ AIDeFiFuel is a machine-to-machine payments demo where users deposit USDC into a
 
 ##### base-sepolia
 
-Contract Address: 0xfc17e51242a0d1F9b5E99923f46086468980BbEe </br>
-Contract Address: 0x478f92bBF6ffF29b3E6F0aC2CD6ff84F5f4E4B05 </br>
-Contract Address: 0xbF0a8b19Ac790f1Ae2af6c6f426e10a19bcE2941 </br>
-Contract Address: 0x7d94bCaf88c6Dd2d292d4F385Dbe9fd422406aF4 </br>
+Vault Contract Address: 0x4F7724F952A5e9692aB9501e74DB2A07Afa56c16 </br>
 
 **Quickstart**
 Smart contracts:
